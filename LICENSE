@@ -1,0 +1,92 @@
+Eternelle Non-Commercial Source-Available License v1.0
+
+Copyright (c) 2026 The Eternelle Authors
+
+1. GRANT OF RIGHTS
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to use,
+copy, modify, and distribute the Software, subject to the conditions below.
+
+2. NON-COMMERCIAL USE
+
+The Software may be used, copied, modified, and distributed for
+non-commercial purposes, including:
+
+* personal use;
+* academic and scientific research;
+* education and teaching;
+* testing and evaluation;
+* non-commercial open-source projects.
+
+3. COMMERCIAL USE
+
+Commercial use of the Software is NOT permitted under this License.
+
+"Commercial use" includes, but is not limited to:
+
+* incorporating the Software into a commercial product or service;
+* using the Software in the operation of a commercial business;
+* using the Software to provide paid services to customers or third parties;
+* distributing the Software as part of a product or system offered for sale,
+  lease, subscription, or other commercial consideration;
+* using the Software internally for a commercial purpose where the Software
+  materially contributes to a commercial product, service, or operation.
+
+Commercial use requires a separate written commercial license from the
+copyright holder.
+
+4. REDISTRIBUTION
+
+Redistribution of the Software, with or without modification, is permitted
+only for non-commercial purposes and must include:
+
+* this License;
+* the above copyright notice; and
+* a clear indication of any modifications made to the Software.
+
+You may not remove or alter copyright notices or license notices contained
+in the Software.
+
+5. DERIVATIVE WORKS
+
+Modified versions and derivative works of the Software remain subject to
+the non-commercial restrictions of this License unless you have obtained
+a separate written license from the copyright holder.
+
+6. COMMERCIAL LICENSING
+
+The copyright holder may grant commercial licenses for the Software under
+separate terms and conditions.
+
+For commercial licensing inquiries, please contact the copyright holder.
+
+7. TRADEMARKS
+
+This License does not grant permission to use the names "Eternelle",
+"Eternelle3D", "Scan2Mesh", or any associated trademarks, logos, or branding
+for commercial purposes or to imply endorsement or affiliation without
+prior written permission.
+
+8. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY
+CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT,
+OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR
+THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+9. SEVERABILITY
+
+If any provision of this License is determined to be invalid or
+unenforceable, the remaining provisions shall remain in full force and
+effect.
+
+10. ENTIRE LICENSE
+
+This License constitutes the terms under which the Software is made
+available. Any additional rights must be granted in a separate written
+agreement signed by the copyright holder.
