@@ -1,8 +1,15 @@
-# Scan2Mesh
+# Scan2Mesh: Lightweight Mesh Maps for High-Speed LiDAR Registration
 
 Scan2Mesh is a high-performance mesh-based LiDAR localization and tracking system that estimates LiDAR poses by aligning incoming scans with a pre-built 3D mesh. It achieves real-time tracking rates of **up to 200 Hz using only a single CPU core**, tested on an Intel Core i9-10900K and NVIDIA GeForce RTX 3080 Ti.
 
 The system uses Embree for CPU-based mesh raycasting and CUDA for accelerated ICP computation and reduction. Raycasting is currently the primary performance bottleneck. Replacing the CPU-based Embree pipeline with GPU-accelerated raycasting using CUDA, OptiX, or Vulkan Ray Tracing could significantly increase overall tracking performance.
+
+## Demo Video on YouTube
+
+[![Scan2Mesh Demo](https://img.youtube.com/vi/8QdXkUA7Etw/maxresdefault.jpg)](https://www.youtube.com/watch?v=8QdXkUA7Etw)
+
+*Scan2Mesh: Lightweight Mesh Maps for High-Speed LiDAR Registration*
+
 
 ## Compact Mesh Representation
 
@@ -74,6 +81,7 @@ set(CUDA_ARCH_BIN "60 61 62 70 72 75 80 86")
 Clone or enter the project directory:
 
 ```bash
+git clone https://github.com/fuxingyin/scan2mesh.git
 cd scan2mesh
 mkdir build
 cd build
