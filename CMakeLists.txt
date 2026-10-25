@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.16.3)
 project(Scan2Mesh LANGUAGES CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -46,14 +46,29 @@ endif()
 
 if(SCAN2MESH_TRACKING_BACKEND STREQUAL "CUDA")
   enable_language(CUDA)
-  find_package(CUDAToolkit REQUIRED)
-  set(CMAKE_CUDA_STANDARD 17)
-  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+  if(CMAKE_VERSION VERSION_LESS 3.17)
+    find_package(CUDA REQUIRED)
+    target_include_directories(scan2mesh_core PUBLIC ${CUDA_INCLUDE_DIRS})
+    target_link_libraries(scan2mesh_core PUBLIC ${CUDA_CUDART_LIBRARY})
+  else()
+    find_package(CUDAToolkit REQUIRED)
+    target_link_libraries(scan2mesh_core PUBLIC CUDA::cudart)
+  endif()
+  # The kernels need C++14; CMake only gained CUDA C++17 support in 3.18.
+  set_target_properties(scan2mesh_core PROPERTIES CUDA_STANDARD 14 CUDA_STANDARD_REQUIRED ON)
+  if(CMAKE_VERSION VERSION_LESS 3.18 AND CMAKE_CUDA_ARCHITECTURES)
+    # Honor the same numeric architecture list on older CMake versions.
+    foreach(architecture IN LISTS CMAKE_CUDA_ARCHITECTURES)
+      if(NOT architecture MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "CMake before 3.18 requires numeric CUDA architectures, e.g. 75;86")
+      endif()
+      target_compile_options(scan2mesh_core PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:--generate-code=arch=compute_${architecture},code=sm_${architecture}>)
+    endforeach()
+  endif()
   target_sources(scan2mesh_core PRIVATE cuda/icp.cu
     cuda/containers/device_memory.cpp cuda/containers/initialization.cpp)
   target_compile_definitions(scan2mesh_core PUBLIC SCAN2MESH_USE_CUDA)
-  target_link_libraries(scan2mesh_core PUBLIC CUDA::cudart)
-  set_target_properties(scan2mesh_core PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
 endif()
 
 add_executable(mesh_raycast mesh_raycast/mesh_raycast_app.cpp)

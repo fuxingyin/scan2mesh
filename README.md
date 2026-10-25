@@ -34,7 +34,7 @@ The default build runs ICP on the CPU and has no CUDA or PCL dependency.
 
 | Dependency | Purpose |
 | ---------- | ------- |
-| C++17 compiler and CMake 3.18+ | Build system |
+| C++17 compiler and CMake 3.16.3+ | Build system |
 | Eigen | Pose math and linear solving |
 | Embree 4 | CPU mesh raycasting |
 | Boost.Thread | Shared tracking/viewer state |
@@ -55,7 +55,7 @@ preserve those sensor labels (`green == 0`: vertical; otherwise: horizontal).
 ```bash
 cmake -S . -B build -DSCAN2MESH_TRACKING_BACKEND=CPU
 cmake --build build --parallel
-ctest --test-dir build --output-on-failure
+cmake -E chdir build ctest --output-on-failure
 ```
 
 On macOS, the CPU build dependencies can be installed with Homebrew:
@@ -74,11 +74,14 @@ To select CUDA ICP on a machine with a CUDA toolkit and NVIDIA GPU:
 cmake -S . -B build-cuda -DSCAN2MESH_TRACKING_BACKEND=CUDA \
   -DCMAKE_CUDA_ARCHITECTURES="75;86"
 cmake --build build-cuda --parallel
-ctest --test-dir build-cuda --output-on-failure
+cmake -E chdir build-cuda ctest --output-on-failure
 ```
 
 Set `CMAKE_CUDA_ARCHITECTURES` for the deployment GPU(s). CUDA files are compiled
-once and only for the CUDA backend. Both backends use Embree raycasting,
+once and only for the CUDA backend. CMake 3.16.3 uses legacy toolkit discovery;
+versions before 3.18 translate numeric architecture lists into NVCC flags.
+The CUDA kernels use C++14, while host code uses C++17.
+Both backends use Embree raycasting,
 point-to-plane residuals, Huber weights, the same pose update convention and
 checks for insufficient correspondences, degenerate geometry and non-finite solves.
 A failed ICP estimate leaves the previous pose intact and logs the failed timestamp.
