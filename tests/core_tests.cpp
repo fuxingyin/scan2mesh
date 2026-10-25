@@ -9,6 +9,7 @@
 
 #include "mesh_tracking/scan2mesh_icp.h"
 #include "mesh_tracking/voxel_filter.h"
+#include "utils/eigen_utils.h"
 #include "utils/ply_reader.h"
 
 namespace {
@@ -16,6 +17,24 @@ using Cloud = scan2mesh::ColorCloud;
 using Pose = Scan2MeshICP::Pose;
 void Require(bool condition, const char* message) {
   if (!condition) throw std::runtime_error(message);
+}
+
+void TestFiniteChecks() {
+  Pose matrix = Pose::Identity();
+  Require(scan2mesh::AllFinite(matrix), "Finite matrix rejected");
+  matrix(2, 3) = std::numeric_limits<float>::infinity();
+  Require(!scan2mesh::AllFinite(matrix), "Infinite matrix accepted");
+  Require(!scan2mesh::AllFinite(matrix.block<3, 1>(0, 3)),
+          "Infinite block expression accepted");
+  matrix(2, 3) = -std::numeric_limits<float>::infinity();
+  Require(!scan2mesh::AllFinite(matrix.transpose()),
+          "Negative infinity in transpose accepted");
+  Eigen::Quaternionf rotation = Eigen::Quaternionf::Identity();
+  Require(scan2mesh::AllFinite(rotation.coeffs()), "Finite quaternion rejected");
+  rotation.x() = std::numeric_limits<float>::quiet_NaN();
+  Require(!scan2mesh::AllFinite(rotation.coeffs()), "NaN quaternion accepted");
+  Require(scan2mesh::AllFinite(Eigen::Vector3f(1, 2, 3)),
+          "Finite temporary vector rejected");
 }
 struct Fixtures {
   std::filesystem::path path =
@@ -206,6 +225,7 @@ int main() {
     cudaSafeCall(cudaSetDevice(0));
 #endif
     Fixtures fixtures;
+    TestFiniteChecks();
     TestPLY(fixtures);
     TestICP();
     std::cout << "All PLY, raycasting, transform, voxel and ICP regressions "

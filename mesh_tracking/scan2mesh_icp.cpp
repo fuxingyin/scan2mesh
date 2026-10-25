@@ -35,6 +35,8 @@
  *    individually negotiated terms.
  */
 
+#include "utils/eigen_utils.h"
+
 #include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
 #include <cmath>
@@ -61,7 +63,7 @@ Scan2MeshICP::~Scan2MeshICP() = default;
 bool Scan2MeshICP::EstimatePose(Pose& pose,
                                 const scan2mesh::ColorCloud::ConstPtr& cloud,
                                 int64_t /*timestamp*/) {
-  if (!cloud || cloud->size() < 6 || !pose.allFinite()) return false;
+  if (!cloud || cloud->size() < 6 || !scan2mesh::AllFinite(pose)) return false;
   using Matrix6d = Eigen::Matrix<double, 6, 6>;
   using Vector6d = Eigen::Matrix<double, 6, 1>;
   const Pose initial = pose;
@@ -121,8 +123,8 @@ bool Scan2MeshICP::EstimatePose(Pose& pose,
       const Eigen::Vector3f q_world(target.x, target.y, target.z);
       const Eigen::Vector3f n_world(target.normal_x, target.normal_y,
                                     target.normal_z);
-      if (!p_world.allFinite() || !q_world.allFinite() ||
-          !n_world.allFinite() || n_world.norm() <= 0.1f ||
+      if (!scan2mesh::AllFinite(p_world) || !scan2mesh::AllFinite(q_world) ||
+          !scan2mesh::AllFinite(n_world) || n_world.norm() <= 0.1f ||
           (q_world - p_world).norm() > distance_threshold)
         continue;
       // Linearize in the initial IMU frame, matching the CUDA equations.
@@ -145,7 +147,8 @@ bool Scan2MeshICP::EstimatePose(Pose& pose,
       ++correspondence_count;
     }
 #endif
-    if (correspondence_count < 6 || !A.allFinite() || !b.allFinite())
+    if (correspondence_count < 6 || !scan2mesh::AllFinite(A) ||
+        !scan2mesh::AllFinite(b))
       return false;
     Eigen::SelfAdjointEigenSolver<Matrix6d> spectrum(A, Eigen::EigenvaluesOnly);
     if (spectrum.info() != Eigen::Success ||
@@ -153,7 +156,8 @@ bool Scan2MeshICP::EstimatePose(Pose& pose,
       return false;
     Eigen::LDLT<Matrix6d> solver(A);
     const Vector6d step = solver.solve(-b);
-    if (solver.info() != Eigen::Success || !step.allFinite()) return false;
+    if (solver.info() != Eigen::Success || !scan2mesh::AllFinite(step))
+      return false;
     Pose delta = Pose::Identity();
     const Eigen::Vector3d rotation = step.tail<3>();
     const double angle = rotation.norm();
@@ -164,7 +168,7 @@ bool Scan2MeshICP::EstimatePose(Pose& pose,
     delta.topRightCorner<3, 1>() = step.head<3>().cast<float>();
     increment = delta * increment;
     estimate = initial * increment;
-    if (!estimate.allFinite()) return false;
+    if (!scan2mesh::AllFinite(estimate)) return false;
     if (step.norm() < 1e-6) break;
   }
   pose = estimate;

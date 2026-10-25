@@ -35,6 +35,8 @@
  *    individually negotiated terms.
  */
 
+#include "utils/eigen_utils.h"
+
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -163,9 +165,9 @@ void TrackerInterface::LoadTrajectory() {
     }
 
     Eigen::Quaternionf rotation(qw, qx, qy, qz);
-    if (timestamp < 0 || !rotation.coeffs().allFinite() ||
+    if (timestamp < 0 || !scan2mesh::AllFinite(rotation.coeffs()) ||
         !std::isfinite(rotation.squaredNorm()) || rotation.norm() < 1e-6f ||
-        !Eigen::Vector3f(x, y, z).allFinite()) {
+        !scan2mesh::AllFinite(Eigen::Vector3f(x, y, z))) {
       std::cerr << "Invalid trajectory pose: " << line << '\n';
       continue;
     }

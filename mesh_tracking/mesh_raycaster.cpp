@@ -35,6 +35,8 @@
  *    individually negotiated terms.
  */
 
+#include "utils/eigen_utils.h"
+
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -117,7 +119,7 @@ bool MeshRaycaster::RaycastCloud(
   }
 
   raycast_cloud->clear();
-  if (!T_world_sensor.allFinite()) return false;
+  if (!scan2mesh::AllFinite(T_world_sensor)) return false;
   const Eigen::Matrix3f R_world_sensor = T_world_sensor.topLeftCorner<3, 3>();
   const Eigen::Vector3f t_world_sensor = T_world_sensor.topRightCorner<3, 1>();
 
@@ -131,7 +133,7 @@ bool MeshRaycaster::RaycastCloud(
     const float range = point_sensor.norm();
 
     scan2mesh::PointXYZRGBNormal output_point{};
-    if (!point_sensor.allFinite() || !std::isfinite(range) ||
+    if (!scan2mesh::AllFinite(point_sensor) || !std::isfinite(range) ||
         range <= std::numeric_limits<float>::epsilon()) {
       raycast_cloud->push_back(output_point);
       continue;
