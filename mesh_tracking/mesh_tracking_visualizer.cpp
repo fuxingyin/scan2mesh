@@ -36,12 +36,7 @@
  */
 
 #include "mesh_tracking_visualizer.h"
-
-#include <pcl/common/transforms.h>
-#include <pcl/io/pcd_io.h>
-#include <pcl/io/ply_io.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
+#include "utils/point_cloud.h"
 
 MeshTrackingVisualizer::MeshTrackingVisualizer()
     : live_cloud(nullptr),
@@ -59,13 +54,13 @@ MeshTrackingVisualizer::MeshTrackingVisualizer()
       frame("ui.Frame:", "0"),
       status("ui.Status:", ""),
       threadPack(SharedState::get()) {
-  live_vertical_cloud.reset(new pcl::PointCloud<pcl::PointXYZRGB>);
-  live_horizontal_cloud.reset(new pcl::PointCloud<pcl::PointXYZRGB>);
+  live_vertical_cloud.reset(new scan2mesh::ColorCloud);
+  live_horizontal_cloud.reset(new scan2mesh::ColorCloud);
   vertical_pose.setIdentity();
   horizontal_pose.setIdentity();
 
-  raycasted_cloud_vertical.reset(new pcl::PointCloud<pcl::PointXYZRGBNormal>);
-  raycasted_cloud_horizontal.reset(new pcl::PointCloud<pcl::PointXYZRGBNormal>);
+  raycasted_cloud_vertical.reset(new scan2mesh::NormalCloud);
+  raycasted_cloud_horizontal.reset(new scan2mesh::NormalCloud);
 
   constexpr int kWindowWidth = 1280;
   constexpr int kWindowHeight = 960;
@@ -163,18 +158,17 @@ void MeshTrackingVisualizer::UpdateLiveCloudDisplay() {
   }
 
   // Rebuild display cloud according to the current buttons.
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr display_cloud(
-      new pcl::PointCloud<pcl::PointXYZRGB>);
+  scan2mesh::ColorCloud::Ptr display_cloud(new scan2mesh::ColorCloud);
 
   if (draw_vertical_cloud && !live_vertical_cloud->empty()) {
-    pcl::PointCloud<pcl::PointXYZRGB> cloud = *live_vertical_cloud;
-    pcl::transformPointCloud(cloud, cloud, vertical_pose);
+    scan2mesh::ColorCloud cloud = *live_vertical_cloud;
+    scan2mesh::TransformPointCloud(cloud, cloud, vertical_pose);
     *display_cloud += cloud;
   }
 
   if (draw_horizontal_cloud && !live_horizontal_cloud->empty()) {
-    pcl::PointCloud<pcl::PointXYZRGB> cloud = *live_horizontal_cloud;
-    pcl::transformPointCloud(cloud, cloud, horizontal_pose);
+    scan2mesh::ColorCloud cloud = *live_horizontal_cloud;
+    scan2mesh::TransformPointCloud(cloud, cloud, horizontal_pose);
     *display_cloud += cloud;
   }
 
@@ -203,8 +197,7 @@ void MeshTrackingVisualizer::UpdateCastCloudDisplay() {
   }
 
   // Rebuild display cloud according to the current buttons.
-  pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr display_cloud(
-      new pcl::PointCloud<pcl::PointXYZRGBNormal>);
+  scan2mesh::NormalCloud::Ptr display_cloud(new scan2mesh::NormalCloud);
 
   // if (draw_raycast_vertical_cloud && !raycasted_cloud_vertical->empty()) {
   //   *display_cloud += *raycasted_cloud_vertical;

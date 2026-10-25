@@ -38,9 +38,6 @@
 #ifndef TRACKER_INTERFACE_H_
 #define TRACKER_INTERFACE_H_
 
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <boost/thread/mutex.hpp>
@@ -54,6 +51,7 @@
 #include "scan2mesh_icp.h"
 #include "shared_states.h"
 #include "utils/cloud_render_data.h"
+#include "utils/point_cloud.h"
 #include "utils/thread_safe_value.h"
 
 class TrackerInterface {
@@ -123,20 +121,19 @@ class TrackerInterface {
 
   void LoadTrajectory();
 
-  void SplitLidarCloud(
-      const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud,
-      pcl::PointCloud<pcl::PointXYZRGB>::Ptr& vertical_cloud,
-      pcl::PointCloud<pcl::PointXYZRGB>::Ptr& horizontal_cloud);
+  void SplitLidarCloud(const scan2mesh::ColorCloud::Ptr& input_cloud,
+                       scan2mesh::ColorCloud::Ptr& vertical_cloud,
+                       scan2mesh::ColorCloud::Ptr& horizontal_cloud);
 
-  void FilterHorizontalCloud(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud);
+  void FilterHorizontalCloud(scan2mesh::ColorCloud::Ptr& cloud);
 
-  void EstimatePose(const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud,
+  void EstimatePose(const scan2mesh::ColorCloud::Ptr& cloud,
                     uint64_t lidar_time);
 
   void ValidatePose(uint64_t lidar_time);
 
   void GenerateRaycastClouds(
-      const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& horizontal_cloud);
+      const scan2mesh::ColorCloud::Ptr& horizontal_cloud);
 
   void UpdateVisualization();
 
@@ -170,11 +167,11 @@ class TrackerInterface {
 
   std::unique_ptr<RaycastMesh> raycast_mesh_data;
 
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr last_input_cloud_vertical;
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr last_input_cloud_horizontal;
+  scan2mesh::ColorCloud::Ptr last_input_cloud_vertical;
+  scan2mesh::ColorCloud::Ptr last_input_cloud_horizontal;
 
-  pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr last_raycasted_cloud_vertical;
-  pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr last_raycasted_cloud_horizontal;
+  scan2mesh::NormalCloud::Ptr last_raycasted_cloud_vertical;
+  scan2mesh::NormalCloud::Ptr last_raycasted_cloud_horizontal;
 
   // Visualization data.
   std::unique_ptr<CloudRenderData> live_cloud_vertical;
@@ -187,7 +184,7 @@ class TrackerInterface {
   Matrix4fRowMajor T_world_vti;
   Matrix4fRowMajor T_world_hor;
 
-  Matrix4fRowMajor last_tracked_pose;
+  Matrix4fRowMajor last_tracked_pose = Matrix4fRowMajor::Identity();
 
   // Tracking components.
   std::unique_ptr<MeshRaycaster> raycaster;

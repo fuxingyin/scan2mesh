@@ -38,73 +38,37 @@
 #ifndef SCAN2MESH_ICP_H_
 #define SCAN2MESH_ICP_H_
 
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
+#include <cstdint>
+#include <memory>
 
-#include <Eigen/Cholesky>
-#include <Eigen/Core>
-#include <Eigen/Geometry>
-#include <Eigen/LU>
-#include <Eigen/SVD>
-#include <iostream>
-
-#include "cuda/internal.h"
 #include "mesh_raycaster.h"
+#ifdef SCAN2MESH_USE_CUDA
+#include "cuda/internal.h"
+#endif
 
 class Scan2MeshICP {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  Scan2MeshICP(Eigen::Matrix<float, 4, 4, Eigen::RowMajor>& T_imu_vti,
-               Eigen::Matrix<float, 4, 4, Eigen::RowMajor>& T_imu_hor,
-               const unsigned int vertex_num, const unsigned int face_num,
-               vector<float>* vertices, vector<unsigned int>* faces,
+  using Pose = Eigen::Matrix<float, 4, 4, Eigen::RowMajor>;
+  Scan2MeshICP(const Pose& T_imu_vti, const Pose& T_imu_hor,
+               unsigned int vertex_num, unsigned int face_num,
+               std::vector<float>* vertices, std::vector<unsigned int>* faces,
                float dist_thresh = 2.0f);
+  ~Scan2MeshICP();
 
-  virtual ~Scan2MeshICP();
-
-  bool EstimatePose(
-      Eigen::Matrix<float, 4, 4, Eigen::RowMajor>& T_world_imu,
-      const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr& cloud_in_hor,
-      const int64_t timestamp);
+  // Input points stay in the horizontal LiDAR frame. On failure pose is
+  // unchanged.
+  bool EstimatePose(Pose& T_world_imu,
+                    const scan2mesh::ColorCloud::ConstPtr& cloud,
+                    int64_t timestamp);
 
  private:
-  Eigen::Matrix<double, 3, 3, Eigen::RowMajor> Rodrigues(
-      const Eigen::Vector3d& src);
-
-  Eigen::Matrix<float, 4, 4, Eigen::RowMajor> T_imu_vti;
-  Eigen::Matrix<float, 4, 4, Eigen::RowMajor> T_imu_hor;
-
-  Eigen::Matrix<float, 3, 3, Eigen::RowMajor> R_imu_vti;
-  Eigen::Vector3f t_imu_vti;
-  Eigen::Matrix<float, 3, 3, Eigen::RowMajor> R_vti_imu;
-  Eigen::Vector3f t_vti_imu;
-
-  Eigen::Matrix<float, 3, 3, Eigen::RowMajor> R_imu_hor;
-  Eigen::Vector3f t_imu_hor;
-  Eigen::Matrix<float, 3, 3, Eigen::RowMajor> R_hor_imu;
-  Eigen::Vector3f t_hor_imu;
-
-  unsigned int mesh_vertex_num;
-  unsigned int mesh_face_num;
-  vector<float>* mesh_vertices;
-  vector<unsigned int>* mesh_faces;
-
+  Pose T_imu_hor;
   float distance_threshold;
-  float angle_threshold;
-
+  std::unique_ptr<MeshRaycaster> mesh_raycaster;
+#ifdef SCAN2MESH_USE_CUDA
   DeviceArray<Se3NormalEquation> block_normal_equations;
   DeviceArray<Se3NormalEquation> reduced_normal_equations;
-
-  std::unique_ptr<MeshRaycaster> mesh_raycaster;
-
-  Matrix3f device_R_imu_vti;
-  float3 device_t_imu_vti;
-  Matrix3f device_R_vti_imu;
-  float3 device_t_vti_imu;
-  Matrix3f device_R_imu_hor;
-  float3 device_t_imu_hor;
-  Matrix3f device_R_hor_imu;
-  float3 device_t_hor_imu;
+#endif
 };
-
 #endif

@@ -40,10 +40,13 @@
 
 #include <stdlib.h>
 
+#include <cstring>
 #include <iostream>
+#include <stdexcept>
 
 #include "containers/device_array.hpp"
 #include "cuda_runtime_api.h"
+#include "utils/point_types.h"
 
 #if __CUDA_ARCH__ < 300
 #define MAX_THREADS 512
@@ -51,23 +54,7 @@
 #define MAX_THREADS 1024
 #endif
 
-#if defined(__GNUC__)
-#define cudaSafeCall(expr) ___cudaSafeCall(expr, __FILE__, __LINE__, __func__)
-#else
-#define cudaSafeCall(expr) ___cudaSafeCall(expr, __FILE__, __LINE__)
-#endif
-
-static inline void error(const char* error_string, const char* file,
-                         const int line, const char* func) {
-  std::cout << "Error: " << error_string << "\t" << file << ":" << line
-            << std::endl;
-  exit(0);
-}
-
-static inline void ___cudaSafeCall(cudaError_t err, const char* file,
-                                   const int line, const char* func = "") {
-  if (cudaSuccess != err) error(cudaGetErrorString(err), file, line, func);
-}
+#include "containers/safe_call.hpp"
 
 struct Se3NormalEquation {
   float h00, h01, h02, h03, h04, h05, h06, h11, h12, h13, h14, h15, h16, h22,
@@ -112,77 +99,21 @@ struct Se3NormalEquation {
   }
 };
 
-struct PointXYZRGB {
-  union __attribute__((aligned(16))) {
-    float data[4];
-    struct {
-      float x;
-      float y;
-      float z;
-    };
-  };
-
-  union {
-    union {
-      struct {
-        unsigned char b;
-        unsigned char g;
-        unsigned char r;
-        unsigned char a;
-      };
-      float rgb;
-    };
-    int rgba;
-  };
-};
-
-struct PointXYZRGBNormal {
-  union __attribute__((aligned(16))) {
-    float data[4];
-    struct {
-      float x;
-      float y;
-      float z;
-    };
-  };
-
-  union __attribute__((aligned(16))) {
-    float data_n[4];
-    float normal[3];
-    struct {
-      float normal_x;
-      float normal_y;
-      float normal_z;
-    };
-  };
-
-  union {
-    struct {
-      union {
-        union {
-          struct {
-            unsigned char b;
-            unsigned char g;
-            unsigned char r;
-            unsigned char a;
-          };
-          float rgb;
-        };
-        int rgba;
-      };
-      float curvature;
-    };
-    float data_c[4];
-  };
-};
+using scan2mesh::PointXYZRGB;
+using scan2mesh::PointXYZRGBNormal;
 
 struct Matrix3f {
   float3 data[3];
 };
 
 template <class D, class Matx>
-D& device_cast(Matx& matx) {
-  return (*reinterpret_cast<D*>(matx.data()));
+D device_cast(const Matx& matx) {
+  D result;
+  static_assert(
+      sizeof(D) == sizeof(typename Matx::Scalar) * Matx::SizeAtCompileTime,
+      "Device and Eigen layouts must match");
+  std::memcpy(&result, matx.data(), sizeof(D));
+  return result;
 }
 
 void ComputeICPNormalEquations(

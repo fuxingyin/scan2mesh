@@ -188,7 +188,8 @@ struct GpuIcpNormalEquationFunctor {
 
     Se3NormalEquation result = MakeZeroNormalEquation();
 
-    if (point_distance > distance_threshold || normal_length <= 0.1f) {
+    if (!isfinite(point_distance) || !isfinite(normal_length) ||
+        point_distance > distance_threshold || normal_length <= 0.1f) {
       return result;
     }
 
@@ -199,7 +200,6 @@ struct GpuIcpNormalEquationFunctor {
         previous_inverse_rotation * (target_point - previous_translation);
 
     const float3 normal_previous = previous_inverse_rotation * target_normal;
-
 
     const float3 rotational_part = cross(source_previous, normal_previous);
 
@@ -213,7 +213,7 @@ struct GpuIcpNormalEquationFunctor {
     float weight = 1.0f;
 
     if (absolute_residual > kHuberThreshold) {
-      weight = rsqrtf(sqrtf(absolute_residual / kHuberThreshold));
+      weight = sqrtf(kHuberThreshold / absolute_residual);
     }
 
     const float j0 = weight * normal_previous.x;

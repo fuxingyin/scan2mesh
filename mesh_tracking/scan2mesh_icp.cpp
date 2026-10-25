@@ -35,159 +35,138 @@
  *    individually negotiated terms.
  */
 
+#include <Eigen/Cholesky>
+#include <Eigen/Eigenvalues>
+#include <cmath>
+#include <stdexcept>
+
 #include "scan2mesh_icp.h"
 
-#include <chrono>
-
-Scan2MeshICP::Scan2MeshICP(
-    Eigen::Matrix<float, 4, 4, Eigen::RowMajor>& T_imu_vti,
-    Eigen::Matrix<float, 4, 4, Eigen::RowMajor>& T_imu_hor,
-    const unsigned int vertex_num, const unsigned int face_num,
-    vector<float>* vertices, vector<unsigned int>* faces, float dist_thresh)
-    : T_imu_vti(T_imu_vti),
-      T_imu_hor(T_imu_hor),
-      mesh_vertex_num(vertex_num),
-      mesh_face_num(face_num),
-      mesh_vertices(vertices),
-      mesh_faces(faces),
-      distance_threshold(dist_thresh) {
-  block_normal_equations.create(MAX_THREADS);
+Scan2MeshICP::Scan2MeshICP(const Pose&, const Pose& sensor_to_imu,
+                           unsigned int vertex_num, unsigned int face_num,
+                           std::vector<float>* vertices,
+                           std::vector<unsigned int>* faces, float dist_thresh)
+    : T_imu_hor(sensor_to_imu),
+      distance_threshold(dist_thresh),
+      mesh_raycaster(new MeshRaycaster(vertex_num, face_num, vertices, faces)) {
+  if (!std::isfinite(dist_thresh) || dist_thresh <= 0)
+    throw std::invalid_argument("ICP distance threshold must be positive");
+#ifdef SCAN2MESH_USE_CUDA
+  block_normal_equations.create(64);
   reduced_normal_equations.create(1);
-
-  R_imu_vti = T_imu_vti.topLeftCorner(3, 3);
-  t_imu_vti = T_imu_vti.topRightCorner(3, 1);
-  R_vti_imu = R_imu_vti.inverse();
-  t_vti_imu = -R_vti_imu * t_imu_vti;
-
-  R_imu_hor = T_imu_hor.topLeftCorner(3, 3);
-  t_imu_hor = T_imu_hor.topRightCorner(3, 1);
-  R_hor_imu = R_imu_hor.inverse();
-  t_hor_imu = -R_hor_imu * t_imu_hor;
-
-  mesh_raycaster.reset(new MeshRaycaster(mesh_vertex_num, mesh_face_num,
-                                         mesh_vertices, mesh_faces));
-
-  device_R_imu_vti = device_cast<Matrix3f>(R_imu_vti);
-  device_t_imu_vti = device_cast<float3>(t_imu_vti);
-  device_R_vti_imu = device_cast<Matrix3f>(R_vti_imu);
-  device_t_vti_imu = device_cast<float3>(t_vti_imu);
-
-  device_R_imu_hor = device_cast<Matrix3f>(R_imu_hor);
-  device_t_imu_hor = device_cast<float3>(t_imu_hor);
-  device_R_hor_imu = device_cast<Matrix3f>(R_hor_imu);
-  device_t_hor_imu = device_cast<float3>(t_hor_imu);
+#endif
 }
+Scan2MeshICP::~Scan2MeshICP() = default;
 
-Scan2MeshICP::~Scan2MeshICP() {}
-
-Eigen::Matrix<double, 3, 3, Eigen::RowMajor> Scan2MeshICP::Rodrigues(
-    const Eigen::Vector3d& src) {
-  Eigen::Matrix<double, 3, 3, Eigen::RowMajor> dst =
-      Eigen::Matrix<double, 3, 3, Eigen::RowMajor>::Identity();
-  double rx, ry, rz, theta;
-  rx = src(0);
-  ry = src(1);
-  rz = src(2);
-  theta = src.norm();
-  if (theta >= std::numeric_limits<double>::epsilon()) {
-    const double I[] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
-    double c = cos(theta);
-    double s = sin(theta);
-    double c1 = 1. - c;
-    double itheta = theta ? 1. / theta : 0.;
-    rx *= itheta;
-    ry *= itheta;
-    rz *= itheta;
-    double rrt[] = {rx * rx, rx * ry, rx * rz, rx * ry, ry * ry,
-                    ry * rz, rx * rz, ry * rz, rz * rz};
-    double _r_x_[] = {0, -rz, ry, rz, 0, -rx, -ry, rx, 0};
-    double R[9];
-    for (int k = 0; k < 9; k++) {
-      R[k] = c * I[k] + c1 * rrt[k] + s * _r_x_[k];
-    }
-    memcpy(dst.data(), &R[0],
-           sizeof(Eigen::Matrix<double, 3, 3, Eigen::RowMajor>));
-  }
-  return dst;
-}
-
-bool Scan2MeshICP::EstimatePose(
-    Eigen::Matrix<float, 4, 4, Eigen::RowMajor>& T_world_imu,
-    const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr& cloud_in_hor,
-    const int64_t timestamp) {
-  if (!cloud_in_hor || cloud_in_hor->empty()) {
-    return false;
-  }
-
-  Eigen::Matrix<float, 3, 3, Eigen::RowMajor> Rprev =
-      T_world_imu.topLeftCorner<3, 3>();
-  Eigen::Vector3f tprev = T_world_imu.topRightCorner<3, 1>();
-  Eigen::Matrix<float, 3, 3, Eigen::RowMajor> Rprev_inv = Rprev.inverse();
-
-  const auto device_Rprev_inv = device_cast<Matrix3f>(Rprev_inv);
-  const auto device_tprev = device_cast<float3>(tprev);
-
-  const Eigen::Matrix<float, 4, 4, Eigen::RowMajor> T_wi_init = T_world_imu;
-  Eigen::Matrix<float, 4, 4, Eigen::RowMajor> T_wi_est = T_world_imu;
-  Eigen::Matrix<float, 4, 4, Eigen::RowMajor> T_inc_est =
-      Eigen::Matrix<float, 4, 4, Eigen::RowMajor>::Identity();
-
-  DeviceArray<pcl::PointXYZRGB> cloud_in_sta_dev;
-  cloud_in_sta_dev.upload(cloud_in_hor->points);
-  pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloud_cast_hor(
-      new pcl::PointCloud<pcl::PointXYZRGBNormal>);
-
-  constexpr int kMaxIcpIterations = 5;
-  for (int i = 0; i < kMaxIcpIterations; ++i) {
-    Eigen::Matrix<float, 4, 4, Eigen::RowMajor> T_world_hor =
-        T_wi_est * T_imu_hor;
-
-    mesh_raycaster->RaycastCloud(cloud_in_hor, T_world_hor, cloud_cast_hor);
-    if (cloud_cast_hor->empty()) {
-      break;
-    }
-
-    DeviceArray<pcl::PointXYZRGBNormal> cloud_cast_hor_dev;
-    cloud_cast_hor_dev.upload(cloud_cast_hor->points);
-
-    Eigen::Matrix<float, 3, 3, Eigen::RowMajor> Rcurr =
-        T_wi_est.topLeftCorner<3, 3>();
-    Eigen::Vector3f tcurr = T_wi_est.topRightCorner<3, 1>();
-
-    const auto device_Rcurr = device_cast<Matrix3f>(Rcurr);
-    const auto device_tcurr = device_cast<float3>(tcurr);
-
-    Eigen::Matrix<float, 6, 6, Eigen::RowMajor> A_icp;
-    Eigen::Matrix<float, 6, 1> b_icp;
-    float residual[2] = {0.0f, 0.0f};
-
+bool Scan2MeshICP::EstimatePose(Pose& pose,
+                                const scan2mesh::ColorCloud::ConstPtr& cloud,
+                                int64_t /*timestamp*/) {
+  if (!cloud || cloud->size() < 6 || !pose.allFinite()) return false;
+  using Matrix6d = Eigen::Matrix<double, 6, 6>;
+  using Vector6d = Eigen::Matrix<double, 6, 1>;
+  const Pose initial = pose;
+  Pose estimate = pose;
+  Pose increment = Pose::Identity();
+  const Eigen::Matrix3f initial_inverse_rotation =
+      initial.topLeftCorner<3, 3>().transpose();
+  const Eigen::Vector3f initial_translation = initial.topRightCorner<3, 1>();
+  auto targets = std::make_shared<scan2mesh::NormalCloud>();
+#ifdef SCAN2MESH_USE_CUDA
+  DeviceArray<scan2mesh::PointXYZRGB> source_device;
+  source_device.upload(cloud->points);
+#endif
+  for (int iteration = 0; iteration < 5; ++iteration) {
+    const Pose world_sensor = estimate * T_imu_hor;
+    if (!mesh_raycaster->RaycastCloud(cloud, world_sensor, targets))
+      return false;
+    Matrix6d A = Matrix6d::Zero();
+    Vector6d b = Vector6d::Zero();
+    std::size_t correspondence_count = 0;
+#ifdef SCAN2MESH_USE_CUDA
+    DeviceArray<scan2mesh::PointXYZRGBNormal> target_device;
+    target_device.upload(targets->points);
+    Eigen::Matrix<float, 3, 3, Eigen::RowMajor> current_rotation =
+        estimate.topLeftCorner<3, 3>();
+    Eigen::Vector3f current_translation = estimate.topRightCorner<3, 1>();
+    Eigen::Matrix<float, 3, 3, Eigen::RowMajor> sensor_rotation =
+        T_imu_hor.topLeftCorner<3, 3>();
+    Eigen::Vector3f sensor_translation = T_imu_hor.topRightCorner<3, 1>();
+    Eigen::Matrix<float, 3, 3, Eigen::RowMajor> previous_inverse =
+        initial_inverse_rotation;
+    Eigen::Matrix<float, 6, 6, Eigen::RowMajor> gpu_A;
+    Eigen::Matrix<float, 6, 1> gpu_b;
+    float residual[2] = {};
     ComputeICPNormalEquations(
-        device_Rcurr, device_tcurr, device_R_imu_hor, device_t_imu_hor,
-        device_Rprev_inv, device_tprev, cloud_in_sta_dev, cloud_cast_hor_dev,
-        distance_threshold, angle_threshold, block_normal_equations,
-        reduced_normal_equations, A_icp.data(), b_icp.data(), residual, 128, 64,
-        cloud_in_hor->points.size());
-
-    // Cast to double for numerical stability during solving
-    Eigen::Matrix<double, 6, 6, Eigen::RowMajor> dA_icp = A_icp.cast<double>();
-    Eigen::Matrix<double, 6, 1> db_icp = b_icp.cast<double>();
-
-    // Solve Ax = -b
-    Eigen::Matrix<double, 6, 1> result = dA_icp.ldlt().solve(-db_icp);
-
-    // Update transformation
-    Eigen::Vector3f inc_t(result(0), result(1), result(2));
-    Eigen::Vector3d inc_ksi(result(3), result(4), result(5));
-
-    Eigen::Matrix<float, 4, 4, Eigen::RowMajor> rt_inc_step =
-        Eigen::Matrix<float, 4, 4, Eigen::RowMajor>::Identity();
-    rt_inc_step.topLeftCorner<3, 3>() = Rodrigues(inc_ksi).cast<float>();
-    rt_inc_step.topRightCorner<3, 1>() = inc_t;
-
-    T_inc_est = rt_inc_step * T_inc_est;
-    T_wi_est = T_wi_init * T_inc_est;
+        device_cast<Matrix3f>(current_rotation),
+        device_cast<float3>(current_translation),
+        device_cast<Matrix3f>(sensor_rotation),
+        device_cast<float3>(sensor_translation),
+        device_cast<Matrix3f>(previous_inverse),
+        device_cast<float3>(initial_translation), source_device, target_device,
+        distance_threshold, 0.0f, block_normal_equations,
+        reduced_normal_equations, gpu_A.data(), gpu_b.data(), residual, 128, 64,
+        static_cast<int>(cloud->size()));
+    A = gpu_A.cast<double>();
+    b = gpu_b.cast<double>();
+    if (!std::isfinite(residual[1])) return false;
+    correspondence_count = static_cast<std::size_t>(residual[1]);
+#else
+    for (std::size_t i = 0; i < cloud->size(); ++i) {
+      const auto& source = cloud->points[i];
+      const auto& target = targets->points[i];
+      const Eigen::Vector3f p_world =
+          world_sensor.topLeftCorner<3, 3>() *
+              Eigen::Vector3f(source.x, source.y, source.z) +
+          world_sensor.topRightCorner<3, 1>();
+      const Eigen::Vector3f q_world(target.x, target.y, target.z);
+      const Eigen::Vector3f n_world(target.normal_x, target.normal_y,
+                                    target.normal_z);
+      if (!p_world.allFinite() || !q_world.allFinite() ||
+          !n_world.allFinite() || n_world.norm() <= 0.1f ||
+          (q_world - p_world).norm() > distance_threshold)
+        continue;
+      // Linearize in the initial IMU frame, matching the CUDA equations.
+      const Eigen::Vector3d p =
+          (initial_inverse_rotation * (p_world - initial_translation))
+              .cast<double>();
+      const Eigen::Vector3d q =
+          (initial_inverse_rotation * (q_world - initial_translation))
+              .cast<double>();
+      const Eigen::Vector3d n =
+          (initial_inverse_rotation * n_world).cast<double>();
+      Vector6d J;
+      J.head<3>() = n;
+      J.tail<3>() = p.cross(n);
+      const double residual = n.dot(p - q);
+      const double weight =
+          std::abs(residual) > 0.1 ? 0.1 / std::abs(residual) : 1.0;
+      A.noalias() += weight * J * J.transpose();
+      b.noalias() += weight * J * residual;
+      ++correspondence_count;
+    }
+#endif
+    if (correspondence_count < 6 || !A.allFinite() || !b.allFinite())
+      return false;
+    Eigen::SelfAdjointEigenSolver<Matrix6d> spectrum(A, Eigen::EigenvaluesOnly);
+    if (spectrum.info() != Eigen::Success ||
+        spectrum.eigenvalues()(0) <= spectrum.eigenvalues()(5) * 1e-9)
+      return false;
+    Eigen::LDLT<Matrix6d> solver(A);
+    const Vector6d step = solver.solve(-b);
+    if (solver.info() != Eigen::Success || !step.allFinite()) return false;
+    Pose delta = Pose::Identity();
+    const Eigen::Vector3d rotation = step.tail<3>();
+    const double angle = rotation.norm();
+    if (angle > 1e-12)
+      delta.topLeftCorner<3, 3>() = Eigen::AngleAxisd(angle, rotation / angle)
+                                        .toRotationMatrix()
+                                        .cast<float>();
+    delta.topRightCorner<3, 1>() = step.head<3>().cast<float>();
+    increment = delta * increment;
+    estimate = initial * increment;
+    if (!estimate.allFinite()) return false;
+    if (step.norm() < 1e-6) break;
   }
-
-  T_world_imu = T_wi_est;
+  pose = estimate;
   return true;
 }

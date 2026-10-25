@@ -35,221 +35,211 @@
  *    individually negotiated terms.
  */
 
-#include "ply_reader.h"
-
-#include <cstdint>
-#include <cstdio>
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <fstream>
 #include <iostream>
-#include <sstream>
-#include <string>
+#include <limits>
+#include <stdexcept>
 
-bool LoadPLYMesh(const std::string &filename, unsigned int &vertex_num,
-                 unsigned int &face_num, std::vector<float> &vertices,
-                 std::vector<unsigned int> &faces) {
-  FILE *file = std::fopen(filename.c_str(), "rb");
-  if (file == nullptr) {
-    std::cerr << "ERROR: Unable to open PLY file: " << filename << std::endl;
-    return false;
-  }
+#include "ply_reader.h"
+#include "tinyply.h"
 
-  auto close_file = [&file]() {
-    if (file != nullptr) {
-      std::fclose(file);
-      file = nullptr;
-    }
-  };
+namespace {
+using Data = std::shared_ptr<tinyply::PlyData>;
 
-  enum class ElementType {
-    kNone,
-    kVertex,
-    kFace,
-  };
-
-  bool is_binary_little_endian = false;
-  bool header_finished = false;
-  ElementType current_element = ElementType::kNone;
-
-  size_t vertex_property_count = 0;
-  size_t face_color_channels = 0;
-
-  char line[1024];
-  while (std::fgets(line, sizeof(line), file) != nullptr) {
-    std::string header_line(line);
-
-    std::istringstream stream(header_line);
-    std::string keyword;
-
-    stream >> keyword;
-
-    if (keyword.empty()) {
-      continue;
-    }
-
-    if (keyword == "ply") {
-      continue;
-    }
-
-    if (keyword == "format") {
-      std::string format;
-      stream >> format;
-      if (format == "binary_little_endian") {
-        is_binary_little_endian = true;
-      } else if (format == "ascii") {
-        std::cerr << "ERROR: ASCII PLY is not supported." << std::endl;
-        close_file();
-        return false;
-      } else {
-        std::cerr << "ERROR: Unsupported PLY format: " << format << std::endl;
-        close_file();
-        return false;
-      }
-      continue;
-    }
-
-    if (keyword == "element") {
-      std::string element_name;
-      size_t element_count = 0;
-      stream >> element_name >> element_count;
-      if (element_name == "vertex") {
-        current_element = ElementType::kVertex;
-        vertex_num = static_cast<unsigned int>(element_count);
-      } else if (element_name == "face") {
-        current_element = ElementType::kFace;
-        face_num = static_cast<unsigned int>(element_count);
-      } else {
-        current_element = ElementType::kNone;
-      }
-      continue;
-    }
-
-    if (keyword == "property") {
-      if (current_element == ElementType::kVertex) {
-        ++vertex_property_count;
-      } else if (current_element == ElementType::kFace) {
-        std::string type;
-        stream >> type;
-        if (type != "list") {
-          std::string property_name;
-          stream >> property_name;
-          if (property_name == "red" || property_name == "green" ||
-              property_name == "blue" || property_name == "alpha") {
-            ++face_color_channels;
-          }
-        }
-      }
-      continue;
-    }
-
-    if (keyword == "end_header") {
-      header_finished = true;
-      break;
+// Request scalars separately: PLY permits reordered and mixed-type coordinates.
+Data Request(tinyply::PlyFile& file, const std::string& element,
+             const std::string& name, bool required = true) {
+  for (const auto& e : file.get_elements()) {
+    if (e.name != element) continue;
+    for (const auto& p : e.properties) {
+      if (p.name != name) continue;
+      if (p.isList)
+        throw std::runtime_error("Expected scalar property: " + name);
+      return file.request_properties_from_element(element, {name});
     }
   }
+  if (required) throw std::runtime_error("Missing PLY property: " + name);
+  return {};
+}
 
-  if (!header_finished) {
-    std::cerr << "ERROR: Invalid PLY file. Header not terminated." << std::endl;
-    close_file();
-    return false;
+template <typename T>
+double Scalar(const Data& data, std::size_t index) {
+  T value;
+  const std::size_t offset = index * sizeof(T);
+  if (offset + sizeof(T) > data->buffer.size_bytes())
+    throw std::runtime_error("PLY property buffer is too small");
+  std::memcpy(&value, data->buffer.get_const() + offset, sizeof(T));
+  return static_cast<double>(value);
+}
+
+double Value(const Data& data, std::size_t index) {
+  using tinyply::Type;
+  switch (data->t) {
+    case Type::INT8:
+      return Scalar<int8_t>(data, index);
+    case Type::UINT8:
+      return Scalar<uint8_t>(data, index);
+    case Type::INT16:
+      return Scalar<int16_t>(data, index);
+    case Type::UINT16:
+      return Scalar<uint16_t>(data, index);
+    case Type::INT32:
+      return Scalar<int32_t>(data, index);
+    case Type::UINT32:
+      return Scalar<uint32_t>(data, index);
+    case Type::FLOAT32:
+      return Scalar<float>(data, index);
+    case Type::FLOAT64:
+      return Scalar<double>(data, index);
+    default:
+      throw std::runtime_error("Unsupported PLY scalar type");
   }
+}
 
-  if (!is_binary_little_endian) {
-    std::cerr << "ERROR: Only binary little-endian PLY is supported."
-              << std::endl;
-    close_file();
-    return false;
+struct PlyInput {
+  std::ifstream stream;
+  tinyply::PlyFile file;
+  std::array<Data, 3> xyz;
+  explicit PlyInput(const std::string& filename)
+      : stream(filename, std::ios::binary) {
+    std::string magic;
+    if (!std::getline(stream, magic) || (magic != "ply" && magic != "ply\r"))
+      throw std::runtime_error("Missing PLY signature");
+    stream.seekg(0);
+    if (!stream || !file.parse_header(stream))
+      throw std::runtime_error("Cannot open or parse PLY header");
+    const char* names[] = {"x", "y", "z"};
+    for (int i = 0; i < 3; ++i) xyz[i] = Request(file, "vertex", names[i]);
+    if (!xyz[0]->count ||
+        xyz[0]->count > std::numeric_limits<unsigned int>::max())
+      throw std::runtime_error("Invalid PLY vertex count");
   }
-
-  if (vertex_num == 0) {
-    std::cerr << "ERROR: PLY file contains no vertices." << std::endl;
-    close_file();
-    return false;
+  float Coordinate(int axis, std::size_t index) const {
+    const float result = static_cast<float>(Value(xyz[axis], index));
+    if (!std::isfinite(result))
+      throw std::runtime_error("Non-finite PLY coordinate");
+    return result;
   }
+};
+}  // namespace
 
-  if (vertex_property_count < 3) {
-    std::cerr << "ERROR: Invalid vertex properties." << std::endl;
-    close_file();
-    return false;
-  }
-
-  if (face_color_channels != 0 && face_color_channels != 3 &&
-      face_color_channels != 4) {
-    std::cerr << "ERROR: Unsupported number of face color channels: "
-              << face_color_channels << std::endl;
-    close_file();
-    return false;
-  }
-
-  vertices.resize(static_cast<size_t>(vertex_num) * 3);
-
-  for (unsigned int i = 0; i < vertex_num; ++i) {
-    float vertex[3];
-    if (std::fread(vertex, sizeof(float), 3, file) != 3) {
-      std::cerr << "ERROR: Failed to read vertex " << i << std::endl;
-      close_file();
-      return false;
-    }
-    vertices[3 * i + 0] = vertex[0];
-    vertices[3 * i + 1] = vertex[1];
-    vertices[3 * i + 2] = vertex[2];
-    const size_t extra_properties = vertex_property_count - 3;
-    if (extra_properties > 0) {
-      const size_t bytes_to_skip = extra_properties * sizeof(float);
-      if (std::fseek(file, static_cast<long>(bytes_to_skip), SEEK_CUR) != 0) {
-        std::cerr << "ERROR: Failed to skip vertex properties." << std::endl;
-        close_file();
-        return false;
+bool LoadPLYMesh(const std::string& filename, unsigned int& vertex_num,
+                 unsigned int& face_num, std::vector<float>& vertices,
+                 std::vector<unsigned int>& faces) {
+  vertex_num = face_num = 0;
+  vertices.clear();
+  faces.clear();
+  try {
+    PlyInput input(filename);
+    Data indices;
+    for (const auto& e : input.file.get_elements()) {
+      if (e.name != "face") continue;
+      for (const auto& p : e.properties) {
+        if (p.name != "vertex_indices" && p.name != "vertex_index") continue;
+        if (!p.isList || p.propertyType == tinyply::Type::FLOAT32 ||
+            p.propertyType == tinyply::Type::FLOAT64)
+          throw std::runtime_error("Face indices must be an integer list");
+        // A hint of three validates every face, including binary fast paths.
+        indices =
+            input.file.request_properties_from_element("face", {p.name}, 3);
+        break;
       }
     }
+    if (!indices || !indices->count ||
+        indices->count > std::numeric_limits<unsigned int>::max())
+      throw std::runtime_error("PLY mesh requires triangular faces");
+    input.file.read(input.stream);
+    if (input.file.is_binary_file() && input.stream.eof())
+      throw std::runtime_error("Truncated binary PLY data");
+    std::vector<float> new_vertices(input.xyz[0]->count * 3);
+    std::vector<unsigned int> new_faces(indices->count * 3);
+    for (std::size_t i = 0; i < input.xyz[0]->count; ++i)
+      for (int axis = 0; axis < 3; ++axis)
+        new_vertices[3 * i + axis] = input.Coordinate(axis, i);
+    for (std::size_t i = 0; i < new_faces.size(); ++i) {
+      const double index = Value(indices, i);
+      if (index < 0 || index >= input.xyz[0]->count)
+        throw std::runtime_error("PLY face index is out of range");
+      new_faces[i] = static_cast<unsigned int>(index);
+    }
+    vertices.swap(new_vertices);
+    faces.swap(new_faces);
+    vertex_num = static_cast<unsigned int>(vertices.size() / 3);
+    face_num = static_cast<unsigned int>(faces.size() / 3);
+    return true;
+  } catch (const std::exception& e) {
+    std::cerr << "Failed to load mesh " << filename << ": " << e.what() << '\n';
+    return false;
   }
+}
 
-  faces.resize(static_cast<size_t>(face_num) * 3);
-  for (unsigned int i = 0; i < face_num; ++i) {
-    uint8_t vertex_count = 0;
-
-    if (std::fread(&vertex_count, sizeof(uint8_t), 1, file) != 1) {
-      std::cerr << "ERROR: Failed to read face vertex count for face " << i
-                << std::endl;
-      close_file();
-      return false;
-    }
-
-    if (vertex_count != 3) {
-      std::cerr << "ERROR: Only triangular faces are supported. "
-                << "Face " << i << " has " << static_cast<int>(vertex_count)
-                << " vertices." << std::endl;
-      close_file();
-      return false;
-    }
-
-    int indices[3];
-    if (std::fread(indices, sizeof(int), 3, file) != 3) {
-      std::cerr << "ERROR: Failed to read face indices for face " << i
-                << std::endl;
-      close_file();
-      return false;
-    }
-    for (int j = 0; j < 3; ++j) {
-      if (indices[j] < 0 ||
-          static_cast<unsigned int>(indices[j]) >= vertex_num) {
-        std::cerr << "ERROR: Invalid vertex index in face " << i << std::endl;
-        close_file();
-        return false;
-      }
-
-      faces[3 * i + j] = static_cast<unsigned int>(indices[j]);
-    }
-    // Skip optional face colors.
-    if (face_color_channels > 0) {
-      if (std::fseek(file,
-                     static_cast<long>(face_color_channels * sizeof(uint8_t)),
-                     SEEK_CUR) != 0) {
-        std::cerr << "ERROR: Failed to skip face color data." << std::endl;
-        close_file();
-        return false;
+bool LoadPLYCloud(const std::string& filename, scan2mesh::ColorCloud& cloud) {
+  cloud.clear();
+  try {
+    PlyInput input(filename);
+    std::array<Data, 3> colors;
+    const char* names[] = {"red", "green", "blue"};
+    for (int i = 0; i < 3; ++i)
+      colors[i] = Request(input.file, "vertex", names[i], false);
+    input.file.read(input.stream);
+    if (input.file.is_binary_file() && input.stream.eof())
+      throw std::runtime_error("Truncated binary PLY data");
+    scan2mesh::ColorCloud result;
+    result.points.resize(input.xyz[0]->count);
+    for (std::size_t i = 0; i < result.size(); ++i) {
+      auto& p = result.points[i];
+      p.x = input.Coordinate(0, i);
+      p.y = input.Coordinate(1, i);
+      p.z = input.Coordinate(2, i);
+      std::uint8_t* channels[] = {&p.r, &p.g, &p.b};
+      for (int c = 0; c < 3; ++c) {
+        if (!colors[c]) continue;
+        const double value = Value(colors[c], i);
+        if (!std::isfinite(value) || value < 0 || value > 255)
+          throw std::runtime_error("PLY color is out of range");
+        *channels[c] = static_cast<std::uint8_t>(value);
       }
     }
+    cloud = std::move(result);
+    return true;
+  } catch (const std::exception& e) {
+    std::cerr << "Failed to load cloud " << filename << ": " << e.what()
+              << '\n';
+    return false;
   }
+}
 
-  close_file();
-  return true;
+bool SavePLYCloud(const std::string& filename,
+                  const scan2mesh::ColorCloud& cloud) {
+  try {
+    std::ofstream stream(filename, std::ios::binary);
+    if (!stream) throw std::runtime_error("Cannot open output PLY");
+    std::vector<float> xyz;
+    std::vector<std::uint8_t> rgb;
+    xyz.reserve(cloud.size() * 3);
+    rgb.reserve(cloud.size() * 3);
+    for (const auto& p : cloud.points) {
+      xyz.insert(xyz.end(), {p.x, p.y, p.z});
+      rgb.insert(rgb.end(), {p.r, p.g, p.b});
+    }
+    tinyply::PlyFile file;
+    file.add_properties_to_element(
+        "vertex", {"x", "y", "z"}, tinyply::Type::FLOAT32, cloud.size(),
+        reinterpret_cast<const std::uint8_t*>(xyz.data()),
+        tinyply::Type::INVALID, 0);
+    file.add_properties_to_element("vertex", {"red", "green", "blue"},
+                                   tinyply::Type::UINT8, cloud.size(),
+                                   rgb.data(), tinyply::Type::INVALID, 0);
+    file.write(stream, true);
+    stream.flush();
+    if (!stream) throw std::runtime_error("Failed to write PLY");
+    return true;
+  } catch (const std::exception& e) {
+    std::cerr << "Failed to save cloud " << filename << ": " << e.what()
+              << '\n';
+    return false;
+  }
 }

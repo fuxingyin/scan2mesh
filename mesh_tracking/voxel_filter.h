@@ -18,10 +18,9 @@
 #ifndef VOXEL_FILTER_H_
 #define VOXEL_FILTER_H_
 
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-
 #include <cstddef>
+
+#include "utils/point_cloud.h"
 
 struct AdaptiveVoxelFilterOptions {
   float max_length = 0.5f;
@@ -31,19 +30,18 @@ struct AdaptiveVoxelFilterOptions {
 
 // Keep one original point per voxel.
 // The original point coordinates are NOT averaged or modified.
-pcl::PointCloud<pcl::PointXYZRGB> VoxelFilter(
-    const pcl::PointCloud<pcl::PointXYZRGB>& point_cloud, float resolution);
+scan2mesh::ColorCloud VoxelFilter(const scan2mesh::ColorCloud& point_cloud,
+                                  float resolution);
 
-pcl::PointCloud<pcl::PointXYZRGBNormal> VoxelFilter(
-    const pcl::PointCloud<pcl::PointXYZRGBNormal>& point_cloud,
-    float resolution);
+scan2mesh::NormalCloud VoxelFilter(const scan2mesh::NormalCloud& point_cloud,
+                                   float resolution);
 
-pcl::PointCloud<pcl::PointXYZRGB> AdaptiveVoxelFilterWithRangeLimit(
-    const pcl::PointCloud<pcl::PointXYZRGB>& point_cloud,
+scan2mesh::ColorCloud AdaptiveVoxelFilterWithRangeLimit(
+    const scan2mesh::ColorCloud& point_cloud,
     const AdaptiveVoxelFilterOptions& options);
 
-pcl::PointCloud<pcl::PointXYZRGB> AdaptiveVoxelFilter(
-    const pcl::PointCloud<pcl::PointXYZRGB>& point_cloud,
+scan2mesh::ColorCloud AdaptiveVoxelFilter(
+    const scan2mesh::ColorCloud& point_cloud,
     const AdaptiveVoxelFilterOptions& options);
 
 #endif  // VOXEL_FILTER_H_

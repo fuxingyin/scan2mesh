@@ -15,8 +15,6 @@
  * limitations under the License.
  */
 
-#include "voxel_filter.h"
-
 #include <cmath>
 #include <cstdint>
 #include <random>
@@ -55,7 +53,7 @@ VoxelKey GetVoxelKey(const PointT& point, float resolution) {
 
 template <typename PointT>
 std::vector<bool> RandomizedVoxelFilterIndices(
-    const pcl::PointCloud<PointT>& point_cloud, float resolution) {
+    const scan2mesh::PointCloud<PointT>& point_cloud, float resolution) {
   if (point_cloud.empty() || resolution <= 0.0f) {
     return std::vector<bool>(point_cloud.size(), true);
   }
@@ -95,12 +93,12 @@ std::vector<bool> RandomizedVoxelFilterIndices(
 }
 
 template <typename PointT>
-pcl::PointCloud<PointT> RandomizedVoxelFilter(
-    const pcl::PointCloud<PointT>& point_cloud, float resolution) {
+scan2mesh::PointCloud<PointT> RandomizedVoxelFilter(
+    const scan2mesh::PointCloud<PointT>& point_cloud, float resolution) {
   const std::vector<bool> points_used =
       RandomizedVoxelFilterIndices(point_cloud, resolution);
 
-  pcl::PointCloud<PointT> filtered_cloud;
+  scan2mesh::PointCloud<PointT> filtered_cloud;
 
   filtered_cloud.reserve(point_cloud.size());
 
@@ -110,23 +108,18 @@ pcl::PointCloud<PointT> RandomizedVoxelFilter(
     }
   }
 
-  filtered_cloud.width = static_cast<uint32_t>(filtered_cloud.points.size());
-
-  filtered_cloud.height = 1;
-  filtered_cloud.is_dense = point_cloud.is_dense;
-
   return filtered_cloud;
 }
 
 template <typename PointT>
-pcl::PointCloud<PointT> FilterByMaxRange(
-    const pcl::PointCloud<PointT>& point_cloud, float max_range) {
+scan2mesh::PointCloud<PointT> FilterByMaxRange(
+    const scan2mesh::PointCloud<PointT>& point_cloud, float max_range) {
   if (max_range <= 0.0f) {
     return point_cloud;
   }
 
   const float max_range_squared = max_range * max_range;
-  pcl::PointCloud<PointT> filtered_cloud;
+  scan2mesh::PointCloud<PointT> filtered_cloud;
   filtered_cloud.reserve(point_cloud.size());
   for (const auto& point : point_cloud.points) {
     const float range_squared =
@@ -141,14 +134,14 @@ pcl::PointCloud<PointT> FilterByMaxRange(
 }
 
 template <typename PointT>
-pcl::PointCloud<PointT> AdaptivelyVoxelFiltered(
-    const pcl::PointCloud<PointT>& point_cloud,
+scan2mesh::PointCloud<PointT> AdaptivelyVoxelFiltered(
+    const scan2mesh::PointCloud<PointT>& point_cloud,
     const AdaptiveVoxelFilterOptions& options) {
   if (point_cloud.size() <= options.min_num_points) {
     return point_cloud;
   }
 
-  pcl::PointCloud<PointT> result =
+  scan2mesh::PointCloud<PointT> result =
       RandomizedVoxelFilter(point_cloud, options.max_length);
 
   if (result.size() >= options.min_num_points) {
@@ -166,7 +159,7 @@ pcl::PointCloud<PointT> AdaptivelyVoxelFiltered(
       while ((high_length - low_length) / low_length > 0.1f) {
         const float mid_length = (low_length + high_length) * 0.5f;
 
-        pcl::PointCloud<PointT> candidate =
+        scan2mesh::PointCloud<PointT> candidate =
             RandomizedVoxelFilter(point_cloud, mid_length);
 
         if (candidate.size() >= options.min_num_points) {
@@ -186,19 +179,18 @@ pcl::PointCloud<PointT> AdaptivelyVoxelFiltered(
 
 }  // namespace
 
-pcl::PointCloud<pcl::PointXYZRGB> VoxelFilter(
-    const pcl::PointCloud<pcl::PointXYZRGB>& point_cloud, float resolution) {
+scan2mesh::ColorCloud VoxelFilter(const scan2mesh::ColorCloud& point_cloud,
+                                  float resolution) {
   return RandomizedVoxelFilter(point_cloud, resolution);
 }
 
-pcl::PointCloud<pcl::PointXYZRGBNormal> VoxelFilter(
-    const pcl::PointCloud<pcl::PointXYZRGBNormal>& point_cloud,
-    float resolution) {
+scan2mesh::NormalCloud VoxelFilter(const scan2mesh::NormalCloud& point_cloud,
+                                   float resolution) {
   return RandomizedVoxelFilter(point_cloud, resolution);
 }
 
-pcl::PointCloud<pcl::PointXYZRGB> AdaptiveVoxelFilterWithRangeLimit(
-    const pcl::PointCloud<pcl::PointXYZRGB>& point_cloud,
+scan2mesh::ColorCloud AdaptiveVoxelFilterWithRangeLimit(
+    const scan2mesh::ColorCloud& point_cloud,
     const AdaptiveVoxelFilterOptions& options) {
   const auto range_filtered_cloud =
       FilterByMaxRange(point_cloud, options.max_range);
@@ -206,8 +198,8 @@ pcl::PointCloud<pcl::PointXYZRGB> AdaptiveVoxelFilterWithRangeLimit(
   return AdaptivelyVoxelFiltered(range_filtered_cloud, options);
 }
 
-pcl::PointCloud<pcl::PointXYZRGB> AdaptiveVoxelFilter(
-    const pcl::PointCloud<pcl::PointXYZRGB>& point_cloud,
+scan2mesh::ColorCloud AdaptiveVoxelFilter(
+    const scan2mesh::ColorCloud& point_cloud,
     const AdaptiveVoxelFilterOptions& options) {
   return AdaptivelyVoxelFiltered(point_cloud, options);
 }

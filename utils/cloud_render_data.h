@@ -38,10 +38,9 @@
 #ifndef CloudRenderData_H_
 #define CloudRenderData_H_
 
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-
 #include <Eigen/Core>
+
+#include "utils/point_cloud.h"
 
 class CloudRenderData {
  public:
@@ -49,8 +48,8 @@ class CloudRenderData {
 
   typedef Eigen::Matrix4f Transform;
 
-  typedef pcl::PointCloud<pcl::PointXYZRGB> RGBPointCloud;
-  typedef pcl::PointCloud<pcl::PointXYZRGBNormal> RGBNormalPointCloud;
+  typedef scan2mesh::ColorCloud RGBPointCloud;
+  typedef scan2mesh::NormalCloud RGBNormalPointCloud;
 
   CloudRenderData(const Transform& transform, const RGBPointCloud::Ptr& cloud)
       : transform(transform), cloud(cloud) {}

@@ -38,30 +38,14 @@
 #ifndef SCAN2MESH_CONTROLLER_H_
 #define SCAN2MESH_CONTROLLER_H_
 
-#include <GL/glew.h>
-
-#include <fstream>
+#include <boost/thread.hpp>
 #include <iostream>
 #include <memory>
 
-#include <pcl/common/time.h>
-#include <pcl/common/transforms.h>
-#include <pcl/console/parse.h>
-#include <pcl/io/obj_io.h>
-#include <pcl/io/pcd_io.h>
-#include <pcl/io/ply_io.h>
-#include <pcl/io/vtk_io.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-#include <pcl/registration/icp.h>
-#include <pcl/visualization/image_viewer.h>
-
-#include <boost/bind.hpp>
-#include <boost/thread.hpp>
-#include <boost/thread/condition_variable.hpp>
-
 #include "utils/config_args.h"
+#ifdef SCAN2MESH_BUILD_VISUALIZATION
 #include "mesh_tracking_visualizer.h"
+#endif
 #include "tracker_interface.h"
 
 class Scan2MeshController {
@@ -81,7 +65,9 @@ class Scan2MeshController {
   int MainLoop();
 
   std::unique_ptr<TrackerInterface> scan2mesh_tracker;
+#ifdef SCAN2MESH_BUILD_VISUALIZATION
   std::unique_ptr<MeshTrackingVisualizer> visualizer;
+#endif
 
   boost::thread_group threads;
 };

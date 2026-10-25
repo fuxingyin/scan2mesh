@@ -30,64 +30,60 @@ These advantages make Scan2Mesh well suited for large-scale deployment and cloud
 
 ## Requirements
 
-The following dependencies are required:
-| Dependency | Purpose                      |
-| ---------- | ---------------------------- |
-| CUDA       | GPU acceleration             |
-| Embree 4   | High-performance ray tracing |
-| PCL 1.9    | Point cloud processing       |
-| Pangolin   | Visualization                |
-| Boost      | Threading and serialization  |
-| URDFDOM    | URDF parsing                 |
-| CMake      | Build system                 |
+The default build runs ICP on the CPU and has no CUDA or PCL dependency.
 
----
+| Dependency | Purpose |
+| ---------- | ------- |
+| C++17 compiler and CMake 3.18+ | Build system |
+| Eigen | Pose math and linear solving |
+| Embree 4 | CPU mesh raycasting |
+| Boost.Thread | Shared tracking/viewer state |
+| URDFDOM | Sensor extrinsic calibration |
+| Pangolin (optional) | Tracking viewer |
+| CUDA toolkit (optional) | CUDA ICP backend |
 
-### PCL
+PLY input/output uses the bundled tinyply files in `utils/`. Meshes must have
+triangular faces. ASCII, binary little-endian and binary big-endian files are
+supported, including reordered properties, float/double coordinates and optional
+RGB colors. Invalid indices, non-triangular faces, truncated data and non-finite
+coordinates are rejected. Cloud colors default to black when absent; tracking
+uses the green channel to distinguish the two LiDARs, so tracking input must
+preserve those sensor labels (`green == 0`: vertical; otherwise: horizontal).
 
-This project is tested with **PCL 1.9**.
-
-Other PCL versions may also work, but compatibility has not been tested or verified. By default, CMake searches for PCL in the following location:
-
-```bash
-$HOME/software/pcl_install
-```
-
-The PCL version and installation path are specified in `CMakeLists.txt`:
-
-```cmake
-find_package(PCL 1.9 EXACT REQUIRED
-  PATHS "$ENV{HOME}/software/pcl_install")
-```
-
-Please make sure that PCL 1.9 is installed in this location before building the project.
-
-## CUDA Architectures
-
-CUDA binaries are generated for the following GPU architectures:
-
-```text
-60 61 62 70 72 75 80 86
-```
-
-If your GPU architecture is not listed, update `CUDA_ARCH_BIN` in `CMakeLists.txt`:
-
-```cmake
-set(CUDA_ARCH_BIN "60 61 62 70 72 75 80 86")
-```
-
-# Build
-
-Clone or enter the project directory:
+## Build
 
 ```bash
-git clone https://github.com/fuxingyin/scan2mesh.git
-cd scan2mesh
-mkdir build
-cd build
-cmake ..
-make -j$(nproc)
+cmake -S . -B build -DSCAN2MESH_TRACKING_BACKEND=CPU
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
+
+On macOS, the CPU build dependencies can be installed with Homebrew:
+
+```bash
+brew install cmake eigen embree boost urdfdom
+```
+
+To enable the Pangolin viewer, install Pangolin and configure with
+`-DSCAN2MESH_BUILD_VISUALIZATION=ON`. The default is headless; passing `-vs`
+to a build without the viewer produces an explicit error.
+
+To select CUDA ICP on a machine with a CUDA toolkit and NVIDIA GPU:
+
+```bash
+cmake -S . -B build-cuda -DSCAN2MESH_TRACKING_BACKEND=CUDA \
+  -DCMAKE_CUDA_ARCHITECTURES="75;86"
+cmake --build build-cuda --parallel
+ctest --test-dir build-cuda --output-on-failure
+```
+
+Set `CMAKE_CUDA_ARCHITECTURES` for the deployment GPU(s). CUDA files are compiled
+once and only for the CUDA backend. Both backends use Embree raycasting,
+point-to-plane residuals, Huber weights, the same pose update convention and
+checks for insufficient correspondences, degenerate geometry and non-finite solves.
+A failed ICP estimate leaves the previous pose intact and logs the failed timestamp.
+The CPU build and synthetic tests have been verified on Apple Silicon; CUDA and
+the optional Pangolin viewer require validation on a suitably equipped system.
 
 ## Running Mesh Tracking
 
@@ -103,7 +99,7 @@ This example uses data from the [Cartographer Deutsches Museum dataset](https://
 After compiling the project, run the `mesh_tracking` executable from the build directory:
 
 ```bash
-./mesh_tracking -m <mesh_file> -d <data_directory> -u <urdf_file> -vs
+./mesh_tracking -m <mesh_file> -d <data_directory> -u <urdf_file>
 ```
 
 For example:
@@ -112,8 +108,7 @@ For example:
 ./mesh_tracking \
   -m ${HOME}/node_data/b3-2016-03-01-13-39-41_mesh_0.1.ply \
   -d ${HOME}/node_data/ \
-  -u ${HOME}/scan2mesh/src/backpack_3d.urdf \
-  -vs
+  -u ${HOME}/scan2mesh/backpack_3d.urdf
 ```
 
 ## Command Line Arguments
@@ -123,7 +118,32 @@ For example:
 | `-m`   | Path to the reference mesh used for LiDAR tracking and raycasting.                               |
 | `-d`   | Path to the input data directory containing LiDAR and sensor data.                               |
 | `-u`   | Path to the URDF sensor configuration file defining sensor poses and coordinate transformations. |
-| `-vs`  | Enable real-time visualization using Pangolin.                                                   |
+| `-vs` | Enable visualization (requires a build with the viewer enabled). |
+| `-gpu` | CUDA device index, selected before device allocations. |
+| `-cloud-frame` | `imu` (default) or `sensor`; coordinate frame of input points. |
+
+Input data must contain `trajectory.poses` with rows
+`timestamp_us x y z qx qy qz qw`, and scans in
+`ply_folder/<timestamp_us>.ply`. Timestamps are sorted and deduplicated; invalid
+poses are skipped and valid quaternions are normalized. The first valid pose
+initializes tracking. Subsequent reference poses provide diagnostics only and
+do not overwrite the estimated trajectory.
+
+The default `-cloud-frame imu` preserves the combined-cloud input convention:
+each labeled scan is converted once from IMU to its sensor frame. With
+`-cloud-frame sensor`, each labeled point is already in its corresponding LiDAR
+frame. ICP and raycasting consume sensor-frame points, while the viewer applies
+the current sensor-to-world pose to those same points.
+
+The raycasting utility shares the tracker’s raycaster and writes to a configurable
+path instead of a hard-coded home directory:
+
+```bash
+./mesh_raycast mesh.ply cloud.ply [output.ply]
+```
+
+Its input cloud is in the mesh coordinate frame with the sensor at the origin.
+The default output is `casted_points.ply` in the current directory.
 
 ## Mesh Simplification
 

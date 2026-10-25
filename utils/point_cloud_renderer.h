@@ -39,25 +39,25 @@
 #define UTILS_PANGO_CLOUD_H_
 
 #include <pangolin/gl/gl.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
 
 #include <cstddef>
 
+#include "utils/point_cloud.h"
+
 class PointCloudRenderer {
  public:
-  PointCloudRenderer(const pcl::PointCloud<pcl::PointXYZRGB>& cloud)
+  PointCloudRenderer(const scan2mesh::ColorCloud& cloud)
       : point_count(cloud.size()),
-        color_offset(offsetof(pcl::PointXYZRGB, rgb)),
-        point_stride(sizeof(pcl::PointXYZRGB)),
+        color_offset(offsetof(scan2mesh::PointXYZRGB, r)),
+        point_stride(sizeof(scan2mesh::PointXYZRGB)),
         vertex_buffer(0) {
     CreateBuffer(cloud);
   }
 
-  PointCloudRenderer(const pcl::PointCloud<pcl::PointXYZRGBNormal>& cloud)
+  PointCloudRenderer(const scan2mesh::NormalCloud& cloud)
       : point_count(cloud.size()),
-        color_offset(offsetof(pcl::PointXYZRGBNormal, rgb)),
-        point_stride(sizeof(pcl::PointXYZRGBNormal)),
+        color_offset(offsetof(scan2mesh::PointXYZRGBNormal, r)),
+        point_stride(sizeof(scan2mesh::PointXYZRGBNormal)),
         vertex_buffer(0) {
     CreateBuffer(cloud);
   }
@@ -92,7 +92,7 @@ class PointCloudRenderer {
 
  private:
   template <typename PointType>
-  void CreateBuffer(const pcl::PointCloud<PointType>& cloud) {
+  void CreateBuffer(const scan2mesh::PointCloud<PointType>& cloud) {
     glGenBuffers(1, &vertex_buffer);
 
     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);

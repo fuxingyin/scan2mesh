@@ -35,6 +35,7 @@
 */
 
 #include "initialization.hpp"
+#include <stdexcept>
 #include "cuda.h"
 #include "safe_call.hpp"
 #include <stdio.h>
@@ -82,7 +83,7 @@ bool checkIfPreFermiGPU(int device)
 void error(const char *error_string, const char *file, const int line, const char *func)
 {
     std::cout << "Error: " << error_string << "\t" << file << ":" << line << std::endl;
-    exit(0);
+    throw std::runtime_error(error_string);
 }
 
 template <class T> inline void getCudaAttribute(T *attribute, CUdevice_attribute device_attribute, int device)

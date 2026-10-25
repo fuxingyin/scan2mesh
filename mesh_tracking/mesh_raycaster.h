@@ -39,50 +39,32 @@
 #define MESH_RAYCASTER_H_
 
 #include <embree4/rtcore.h>
-#include <pcl/common/common.h>
-#include <pcl/common/transforms.h>
-#include <pcl/io/ply_io.h>
 
-#include <fstream>
-#include <iomanip>
-#include <iostream>
-#include <sstream>
 #include <string>
+#include <vector>
 
-#include "string.h"
-
-using namespace std;
+#include "utils/point_cloud.h"
 
 class MeshRaycaster {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  MeshRaycaster(const int vertex_num, const int face_num,
-                vector<float>* vertices, vector<unsigned int>* faces);
+  MeshRaycaster(unsigned int vertex_num, unsigned int face_num,
+                const std::vector<float>* vertices,
+                const std::vector<unsigned int>* faces);
+  ~MeshRaycaster();
+  MeshRaycaster(const MeshRaycaster&) = delete;
+  MeshRaycaster& operator=(const MeshRaycaster&) = delete;
 
-  virtual ~MeshRaycaster();
-
+  // Output has one entry per input, in world coordinates. Misses have zero
+  // normals.
   bool RaycastCloud(
-      const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr& input_cloud,
+      const scan2mesh::ColorCloud::ConstPtr& input_cloud,
       const Eigen::Matrix<float, 4, 4, Eigen::RowMajor>& T_world_sensor,
-      pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr raycast_cloud,
+      scan2mesh::NormalCloud::Ptr raycast_cloud,
       const std::string& output_name = "");
 
-  void reset();
-
  private:
-  RTCDevice InitializeDevice();
-
-  RTCScene InitializeRaycastingScene(RTCDevice device, int vertex_num,
-                                     int face_num, vector<float>* mesh_vertices,
-                                     vector<unsigned int>* mesh_faces);
-
-  int vertex_num;
-  int face_num;
-  vector<float>* vertices;
-  vector<unsigned int>* faces;
-
-  RTCDevice device;
-  RTCScene scene;
+  RTCDevice device = nullptr;
+  RTCScene scene = nullptr;
 };
-
 #endif

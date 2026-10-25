@@ -45,8 +45,6 @@
 #include "utils/mesh_renderer.h"
 #include "utils/point_cloud_renderer.h"
 
-using namespace std;
-
 class MeshTrackingVisualizer {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -78,7 +76,8 @@ class MeshTrackingVisualizer {
 
   pangolin::OpenGlRenderState s_cam;
 
-  Eigen::Matrix<float, 4, 4, Eigen::RowMajor> trackered_pose;
+  Eigen::Matrix<float, 4, 4, Eigen::RowMajor> trackered_pose =
+      Eigen::Matrix4f::Identity();
 
   std::unique_ptr<PointCloudRenderer> live_cloud;
   std::unique_ptr<PointCloudRenderer> raycast_cloud;
@@ -104,11 +103,11 @@ class MeshTrackingVisualizer {
   Eigen::Matrix4f vertical_pose;
   Eigen::Matrix4f horizontal_pose;
 
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr live_vertical_cloud;
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr live_horizontal_cloud;
+  scan2mesh::ColorCloud::Ptr live_vertical_cloud;
+  scan2mesh::ColorCloud::Ptr live_horizontal_cloud;
 
-  pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr raycasted_cloud_vertical;
-  pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr raycasted_cloud_horizontal;
+  scan2mesh::NormalCloud::Ptr raycasted_cloud_vertical;
+  scan2mesh::NormalCloud::Ptr raycasted_cloud_horizontal;
 };
 
 #endif

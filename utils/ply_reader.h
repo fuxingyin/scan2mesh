@@ -41,8 +41,14 @@
 #include <string>
 #include <vector>
 
+#include "utils/point_cloud.h"
+
 bool LoadPLYMesh(const std::string& filename, unsigned int& vertex_num,
                  unsigned int& face_num, std::vector<float>& vertices,
                  std::vector<unsigned int>& faces);
+
+bool LoadPLYCloud(const std::string& filename, scan2mesh::ColorCloud& cloud);
+bool SavePLYCloud(const std::string& filename,
+                  const scan2mesh::ColorCloud& cloud);
 
 #endif  // PLY_READER_H_

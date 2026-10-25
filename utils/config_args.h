@@ -38,11 +38,10 @@
 #ifndef CONFIGARGS_H_
 #define CONFIGARGS_H_
 
-#include <pcl/console/parse.h>
-
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 
 class ConfigArgs {
@@ -60,6 +59,7 @@ class ConfigArgs {
               << "  -m <mesh>       Path to the registration mesh\n"
               << "  -u <path>       Path to urdf configure file\n"
               << "  -gpu <id>       CUDA GPU device ID (default: 0)\n"
+              << "  -cloud-frame <imu|sensor>  Input frame (default: imu)\n"
               << "  -vs             Enable processing visualization\n"
               << "  -h, --help      Display this help message and exit\n"
               << std::endl;
@@ -68,6 +68,7 @@ class ConfigArgs {
   std::string data_path;
   std::string mesh_path;
   std::string urdf_path;
+  std::string cloud_frame = "imu";
   int gpu_id;
   bool enable_visualization;
 
@@ -75,20 +76,53 @@ class ConfigArgs {
   ConfigArgs(int argc, char** argv) : gpu_id(0), enable_visualization(false) {
     assert(argc > 0 && argv != nullptr);
 
-    const bool help = pcl::console::find_switch(argc, argv, "-h") ||
-                      pcl::console::find_switch(argc, argv, "--help");
-
-    if (help) {
-      usage(argv[0]);
-      std::exit(EXIT_SUCCESS);
+    for (int i = 1; i < argc; ++i) {
+      const std::string option(argv[i]);
+      if (option == "-h" || option == "--help") {
+        usage(argv[0]);
+        std::exit(EXIT_SUCCESS);
+      }
     }
-
-    pcl::console::parse_argument(argc, argv, "-d", data_path);
-    pcl::console::parse_argument(argc, argv, "-m", mesh_path);
-    pcl::console::parse_argument(argc, argv, "-u", urdf_path);
-    pcl::console::parse_argument(argc, argv, "-gpu", gpu_id);
-
-    enable_visualization = pcl::console::find_switch(argc, argv, "-vs");
+    for (int i = 1; i < argc; ++i) {
+      const std::string option(argv[i]);
+      if (option == "-vs") {
+        enable_visualization = true;
+        continue;
+      }
+      if (option != "-d" && option != "-m" && option != "-u" &&
+          option != "-gpu" && option != "-cloud-frame") {
+        std::cerr << "Unknown option: " << option << '\n';
+        std::exit(EXIT_FAILURE);
+      }
+      if (++i >= argc) {
+        std::cerr << "Missing value for " << option << '\n';
+        std::exit(EXIT_FAILURE);
+      }
+      const std::string value(argv[i]);
+      if (option == "-d")
+        data_path = value;
+      else if (option == "-m")
+        mesh_path = value;
+      else if (option == "-u")
+        urdf_path = value;
+      else if (option == "-cloud-frame") {
+        if (value != "imu" && value != "sensor") {
+          std::cerr << "Cloud frame must be imu or sensor\n";
+          std::exit(EXIT_FAILURE);
+        }
+        cloud_frame = value;
+      } else {
+        try {
+          std::size_t consumed = 0;
+          gpu_id = std::stoi(value, &consumed);
+          if (gpu_id < 0 || consumed != value.size())
+            throw std::invalid_argument("GPU ID");
+        } catch (const std::exception&) {
+          std::cerr << "Invalid GPU ID: " << value << '\n';
+          std::exit(EXIT_FAILURE);
+        }
+      }
+    }
 
     if (data_path.empty()) {
       std::cerr << "Error: -d <logfile> is required.\n\n";

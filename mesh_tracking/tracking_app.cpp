@@ -38,6 +38,11 @@
 #include "scan2mesh_controller.h"
 
 int main(int argc, char* argv[]) {
-  Scan2MeshController controller(argc, argv);
-  return controller.start();
+  try {
+    Scan2MeshController controller(argc, argv);
+    return controller.start();
+  } catch (const std::exception& e) {
+    std::cerr << "Tracking failed: " << e.what() << '\n';
+    return 1;
+  }
 }

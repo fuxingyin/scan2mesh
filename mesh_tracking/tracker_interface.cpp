@@ -35,13 +35,6 @@
  *    individually negotiated terms.
  */
 
-#include "tracker_interface.h"
-
-#include <pcl/common/transforms.h>
-#include <pcl/io/ply_io.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -50,14 +43,19 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 
+#include "tracker_interface.h"
+#include "utils/point_cloud.h"
+
+#ifdef SCAN2MESH_USE_CUDA
 #include "cuda/internal.h"
+#endif
 #include "utils/config_args.h"
 #include "utils/ply_reader.h"
 #include "utils/urdf_loader.h"
 #include "voxel_filter.h"
 
-constexpr float kVoxelSize = 0.2f;
 constexpr float kTranslationThreshold = 0.3f;
 constexpr float kRotationThresholdDeg = 15.0f;
 constexpr size_t kTrajectoryCheckFrameLimit = 3000;
@@ -117,6 +115,10 @@ void TrackerInterface::InitializeSensorTransforms() {
 }
 
 void TrackerInterface::InitializeTrackingComponents() {
+#ifdef SCAN2MESH_USE_CUDA
+  // Select before ICP allocates device buffers, and again on its worker thread.
+  cudaSafeCall(cudaSetDevice(ConfigArgs::get().gpu_id));
+#endif
   raycaster.reset(new MeshRaycaster(
       raycast_mesh_data->vertex_num, raycast_mesh_data->face_num,
       raycast_mesh_data->vertices, raycast_mesh_data->faces));
@@ -160,7 +162,14 @@ void TrackerInterface::LoadTrajectory() {
       continue;
     }
 
-    const Eigen::Quaternionf rotation(qw, qx, qy, qz);
+    Eigen::Quaternionf rotation(qw, qx, qy, qz);
+    if (timestamp < 0 || !rotation.coeffs().allFinite() ||
+        !std::isfinite(rotation.squaredNorm()) || rotation.norm() < 1e-6f ||
+        !Eigen::Vector3f(x, y, z).allFinite()) {
+      std::cerr << "Invalid trajectory pose: " << line << '\n';
+      continue;
+    }
+    rotation.normalize();
     const Eigen::Vector3f translation(x, y, z);
 
     Eigen::Isometry3f pose = Eigen::Isometry3f::Identity();
@@ -169,22 +178,33 @@ void TrackerInterface::LoadTrajectory() {
 
     const uint64_t timestamp_us = static_cast<uint64_t>(timestamp);
     tracking_trajectory[timestamp_us] = pose;
-    tracking_timestamps.push_back(timestamp_us);
   }
 
+  for (const auto& entry : tracking_trajectory)
+    tracking_timestamps.push_back(entry.first);
+  if (!tracking_timestamps.empty()) {
+    T_world_imu = tracking_trajectory.begin()->second.matrix();
+    last_tracked_pose = T_world_imu;
+  }
   std::cout << "Loaded " << tracking_timestamps.size() << " trajectory poses."
             << std::endl;
 }
 
 bool TrackerInterface::RunTracking() {
+  if (tracking_timestamps.empty()) {
+    std::cerr << "No valid trajectory poses available.\n";
+    return false;
+  }
   while (!end_requested.Get()) {
     if (shared_state.pause_tracking.Get()) {
-      usleep(1000);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
       continue;
     }
 
     if (first_run) {
+#ifdef SCAN2MESH_USE_CUDA
       cudaSafeCall(cudaSetDevice(ConfigArgs::get().gpu_id));
+#endif
       first_run = false;
     }
 
@@ -196,9 +216,8 @@ bool TrackerInterface::RunTracking() {
     const std::string cloud_file =
         data_path + "/ply_folder/" + std::to_string(lidar_time) + ".ply";
 
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr input_cloud(
-        new pcl::PointCloud<pcl::PointXYZRGB>);
-    if (pcl::io::loadPLYFile(cloud_file, *input_cloud) < 0) {
+    scan2mesh::ColorCloud::Ptr input_cloud(new scan2mesh::ColorCloud);
+    if (!LoadPLYCloud(cloud_file, *input_cloud)) {
       std::cerr << "Failed to load point cloud: " << cloud_file << std::endl;
       return false;
     }
@@ -208,33 +227,26 @@ bool TrackerInterface::RunTracking() {
       return false;
     }
 
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_cloud(
-        new pcl::PointCloud<pcl::PointXYZRGB>);
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr horizontal_cloud(
-        new pcl::PointCloud<pcl::PointXYZRGB>);
+    scan2mesh::ColorCloud::Ptr vertical_cloud(new scan2mesh::ColorCloud);
+    scan2mesh::ColorCloud::Ptr horizontal_cloud(new scan2mesh::ColorCloud);
 
     vertical_cloud->reserve(input_cloud->size());
     horizontal_cloud->reserve(input_cloud->size());
 
     SplitLidarCloud(input_cloud, vertical_cloud, horizontal_cloud);
 
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr horizontal_cloud_original(
-        new pcl::PointCloud<pcl::PointXYZRGB>(*horizontal_cloud));
-
+    if (ConfigArgs::get().cloud_frame == "imu") {
+      scan2mesh::TransformPointCloud(*vertical_cloud, *vertical_cloud,
+                                     T_vti_imu);
+      scan2mesh::TransformPointCloud(*horizontal_cloud, *horizontal_cloud,
+                                     T_hor_imu);
+    }
     FilterHorizontalCloud(horizontal_cloud);
-
-    pcl::transformPointCloud(*vertical_cloud, *vertical_cloud, T_vti_imu);
-    pcl::transformPointCloud(*horizontal_cloud, *horizontal_cloud, T_hor_imu);
-
+    // Keep both clouds in their LiDAR frames for ICP, raycasting and display.
     EstimatePose(horizontal_cloud, lidar_time);
-
     ValidatePose(lidar_time);
 
-    // pcl::transformPointCloud(*horizontal_cloud_original,
-    //                          *horizontal_cloud_original, T_hor_imu);
     GenerateRaycastClouds(horizontal_cloud);
-
-    last_tracked_pose = T_world_imu;
 
     last_input_cloud_vertical = vertical_cloud;
     last_input_cloud_horizontal = horizontal_cloud;
@@ -250,11 +262,11 @@ bool TrackerInterface::RunTracking() {
 }
 
 void TrackerInterface::SplitLidarCloud(
-    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud,
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr& vertical_cloud,
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr& horizontal_cloud) {
+    const scan2mesh::ColorCloud::Ptr& input_cloud,
+    scan2mesh::ColorCloud::Ptr& vertical_cloud,
+    scan2mesh::ColorCloud::Ptr& horizontal_cloud) {
   for (const auto& point : input_cloud->points) {
-    pcl::PointXYZRGB colored_point = point;
+    scan2mesh::PointXYZRGB colored_point = point;
     if (point.g == 0) {
       colored_point.r = 0;
       colored_point.g = 210;
@@ -270,18 +282,20 @@ void TrackerInterface::SplitLidarCloud(
 }
 
 void TrackerInterface::FilterHorizontalCloud(
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud) {
+    scan2mesh::ColorCloud::Ptr& cloud) {
   AdaptiveVoxelFilterOptions options;
   options.max_length = 0.5f;
   options.min_num_points = 2000;
   *cloud = AdaptiveVoxelFilter(*cloud, options);
 }
 
-void TrackerInterface::EstimatePose(
-    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud, uint64_t lidar_time) {
+void TrackerInterface::EstimatePose(const scan2mesh::ColorCloud::Ptr& cloud,
+                                    uint64_t lidar_time) {
   const auto start = std::chrono::high_resolution_clock::now();
 
-  scan2mesh_tracker->EstimatePose(T_world_imu, cloud, lidar_time);
+  if (!scan2mesh_tracker->EstimatePose(T_world_imu, cloud, lidar_time))
+    std::cerr << "ICP failed at timestamp " << lidar_time
+              << "; retaining previous pose.\n";
 
   const auto end = std::chrono::high_resolution_clock::now();
   const double elapsed_ms =
@@ -324,19 +338,18 @@ void TrackerInterface::ValidatePose(uint64_t lidar_time) {
             << "Rotation error: " << rotation_error_deg << " deg\n"
             << "========================================\n";
 
-  T_world_imu = T_reference;
+  // Reference poses are used for diagnostics, never to overwrite ICP results.
 }
 
 void TrackerInterface::GenerateRaycastClouds(
-    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& horizontal_cloud) {
+    const scan2mesh::ColorCloud::Ptr& horizontal_cloud) {
   T_world_hor = T_world_imu * T_imu_hor;
+  T_world_vti = T_world_imu * T_imu_vti;
 
-  pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr horizontal_raycast(
-      new pcl::PointCloud<pcl::PointXYZRGBNormal>);
+  scan2mesh::NormalCloud::Ptr horizontal_raycast(new scan2mesh::NormalCloud);
 
   raycaster->RaycastCloud(horizontal_cloud, T_world_hor, horizontal_raycast);
 
-  // last_raycasted_cloud_vertical = vertical_raycast;
   last_raycasted_cloud_horizontal = horizontal_raycast;
 }
 
@@ -348,6 +361,7 @@ void TrackerInterface::UpdateVisualization() {
 void TrackerInterface::UpdateLiveCloudData() {
   boost::mutex::scoped_lock lock(live_mutex);
 
+  last_tracked_pose = T_world_imu;
   live_available = true;
 
   live_cloud_vertical.reset(
@@ -363,8 +377,6 @@ void TrackerInterface::UpdateRaycastCloudData() {
 
   const Eigen::Matrix4f identity = Eigen::Matrix4f::Identity();
 
-  raycasted_cloud_vertical.reset(
-      new CloudRenderData(identity, last_raycasted_cloud_vertical));
   raycasted_cloud_horizontal.reset(
       new CloudRenderData(identity, last_raycasted_cloud_horizontal));
 }

@@ -35,18 +35,16 @@
  *    individually negotiated terms.
  */
 
+#include <exception>
+#include <stdexcept>
+
 #include "scan2mesh_controller.h"
-
-#include <boost/algorithm/algorithm.hpp>
-#include <boost/algorithm/string.hpp>
-#include <boost/filesystem.hpp>
-
 #include "shared_states.h"
 
 Scan2MeshController* Scan2MeshController::controller = 0;
 
 Scan2MeshController::Scan2MeshController(int argc, char* argv[])
-    : scan2mesh_tracker(nullptr), visualizer(nullptr) {
+    : scan2mesh_tracker(nullptr) {
   ConfigArgs::get(argc, argv);
 
   assert(!Scan2MeshController::controller);
@@ -72,24 +70,41 @@ bool Scan2MeshController::setup() {
       ConfigArgs::get().urdf_path));
 
   if (ConfigArgs::get().enable_visualization) {
-    visualizer =
-        std::unique_ptr<MeshTrackingVisualizer>(new MeshTrackingVisualizer());
-
+#ifdef SCAN2MESH_BUILD_VISUALIZATION
+    visualizer.reset(new MeshTrackingVisualizer());
     visualizer->SetTracker(scan2mesh_tracker.get());
+#else
+    throw std::runtime_error(
+        "Viewer unavailable: rebuild with -DSCAN2MESH_BUILD_VISUALIZATION=ON");
+#endif
   }
 
   return true;
 }
 
 int Scan2MeshController::MainLoop() {
-  threads.add_thread(new boost::thread(
-      boost::bind(&TrackerInterface::RunTracking, scan2mesh_tracker.get())));
-
+#ifdef SCAN2MESH_BUILD_VISUALIZATION
   if (visualizer) {
-    visualizer->Run();
+    bool success = false;
+    std::exception_ptr failure;
+    threads.create_thread([&]() {
+      try {
+        success = scan2mesh_tracker->RunTracking();
+      } catch (...) {
+        failure = std::current_exception();
+      }
+    });
+    try {
+      visualizer->Run();
+    } catch (...) {
+      scan2mesh_tracker->end_requested.Set(true);
+      threads.join_all();
+      throw;
+    }
+    threads.join_all();
+    if (failure) std::rethrow_exception(failure);
+    return success ? 0 : 1;
   }
-
-  threads.join_all();
-
-  return 0;
+#endif
+  return scan2mesh_tracker->RunTracking() ? 0 : 1;
 }
